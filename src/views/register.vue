@@ -15,10 +15,10 @@
             <el-input v-model="formData.email" placeholder="请输入邮箱" size="large"></el-input>
         </el-form-item>
         <el-form-item label="昵称" prop="nickname">
-            <el-input v-model="formData.nickname" placeholder="请输入昵称（可选）" size="large"></el-input>
+            <el-input v-model="formData.nickname" placeholder="请输入昵称" size="large"></el-input>
         </el-form-item>
         <el-form-item label="手机号" prop="phone">
-            <el-input v-model="formData.phone" placeholder="请输入手机号（可选）" size="large"></el-input>
+            <el-input v-model="formData.phone" placeholder="请输入手机号" size="large"></el-input>
         </el-form-item>
         <el-form-item label="密码" prop="password">
             <el-input v-model="formData.password" placeholder="请输入密码" size="large" type="password" show-password></el-input>
@@ -57,14 +57,20 @@ const rules = reactive({
     {  required: true, message: '请输入用户名', trigger: 'blur' }
   ],
   'email': [
-    {  required: true, message: '请输入邮箱', trigger: 'blur' }
+    {  required: true, message: '请输入邮箱', trigger: 'blur' },
+    {  type: 'email', message: '请输入正确的邮箱地址', trigger: 'blur' },
+    {  pattern: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, message: '请输入正确的邮箱格式', trigger: 'blur' }
+  ],
+  'phone': [
+    {  required: true, message: '请输入手机号', trigger: 'blur' },
+    {  pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号格式', trigger: 'blur' }
   ],
   'password': [
     {  required: true, message: '请输入密码', trigger: 'blur' }
   ],
   'confirmPassword': [
     {  required: true, message: '请输入确认密码', trigger: 'blur' }
-  ],
+  ]
 })
 
 const router = useRouter()
