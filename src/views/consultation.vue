@@ -39,7 +39,7 @@
                     <div class="suggestion-text">{{ currentEmotion.suggestion }}</div>
                 </div>
             </div>
-            <div class="healing-acions" v-if="currentEmotion.improvementSuggestions.length > 0">
+            <div class="healing-acions" v-if="(currentEmotion.improvementSuggestions?.length || 0) > 0">
                 <div class="actions-title">治愈小行动</div>
                 <div class="actions-list">
                     <div v-for="action in currentEmotion.improvementSuggestions" :key="action" class="action-item">
@@ -110,7 +110,7 @@
           </el-icon>
         </el-button>
       </div>
-      <div class="chat-messages">
+      <div class="chat-messages" ref="chatMessagesRef">
         <div class="message-item ai-message" v-if="messages.length === 0">
           <div class="message-avatar">
             <el-image :src="iconUrl" style="width: 18px; height: 18px;"></el-image>
@@ -140,7 +140,7 @@
                     <MarkdownRenderer v-else-if="msg.senderType === 2 && !msg.isError" :content="msg.content" :is-ai-message="true"></MarkdownRenderer>
                     <p v-else-if="msg.content" v-html="formatMessageContent(msg.content)"></p>
                 </div>
-                <div class="message-time">{{ msg.senderType === 2 && isAiTyping ? '正在输入中...' : formatTime(msg.createdAt) }}</div>
+                <div class="message-time">{{ msg.senderType === 2 && msg.isTyping ? '正在输入中...' : formatTime(msg.createdAt) }}</div>
             </div>
         </div>
       </div>
@@ -179,9 +179,9 @@ import { ElMessage } from 'element-plus'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 
-const iconUrl = '/src/assets/robot-fill.png'
-const iconUrl1 = '/src/assets/like.png'
-const iconUrl2 = '/src/assets/users.png'
+const iconUrl = new URL('@/assets/robot-fill.png', import.meta.url).href
+const iconUrl1 = new URL('@/assets/like.png', import.meta.url).href
+const iconUrl2 = new URL('@/assets/users.png', import.meta.url).href
 
 const createNewFrontendSession = () => {
     // 清空消息列表
@@ -195,6 +195,7 @@ const createNewFrontendSession = () => {
         content: '您好！我是小涛，您的AI心理健康助手。很高兴陪伴你，为您提供温暖的心理支持。请告诉我，今天您感觉怎么样？有什么想要分享的吗？',
         createdAt: new Date().toISOString()
     })
+    scrollToBottom()
 }
 
 const createNewSession = () => {
@@ -212,6 +213,7 @@ const sessionList = ref([])
 const userMessage = ref('')
 const messages = ref([])
 const isAiTyping = ref(false)
+const chatMessagesRef = ref(null)
 
 const currentEmotion = ref({
     primaryEmotion: '中性',
@@ -225,7 +227,18 @@ const currentEmotion = ref({
 const loadSessionEmotion = (sessionId) => {
     const id = sessionId.toString().startsWith('session_') ? sessionId : `session_${sessionId}`
     getSessionEmotion(id).then(res => {
-        currentEmotion.value = res
+        // 添加默认值处理，确保improvementSuggestions是数组
+        currentEmotion.value = {
+            ...res,
+            improvementSuggestions: res.improvementSuggestions || []
+        }
+    }).catch(error => {
+        console.error('加载情绪分析失败:', error)
+        // 错误情况下也确保improvementSuggestions是数组
+        currentEmotion.value = {
+            ...currentEmotion.value,
+            improvementSuggestions: []
+        }
     })
 }
 
@@ -279,6 +292,7 @@ const sendMessage = () => {
             content: message,
             createdAt: new Date().toISOString()
         })
+        scrollToBottom()
         startAIResponse(currentSession.value.sessionId, message)
     }
 }
@@ -316,6 +330,7 @@ const startNewSession = (message) => {
             createdAt: new Date().toISOString()
         }
         messages.value.push(userMsg)
+        scrollToBottom()
         
         // 使用正确的 sessionId 调用 AI 回复
         if (res.sessionId) {
@@ -353,9 +368,11 @@ const startAIResponse = (sessionId, userMessage) => {
         id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         senderType: 2,
         content: '',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        isTyping: true
     }
     messages.value.push(aiMessage)
+    scrollToBottom()
 
     const ctrl = new AbortController()
     fetchEventSource('/api/psychological-chat/stream', {
@@ -385,8 +402,16 @@ const startAIResponse = (sessionId, userMessage) => {
 
             if (raw === '[DONE]' || event.event === 'done') {
                 isAiTyping.value = false
+                // 找到当前正在输入的消息并设置 isTyping 为 false
+                const aiMessage = messages.value[messages.value.length - 1]
+                if (aiMessage) {
+                    aiMessage.isTyping = false
+                }
                 ctrl.abort()
-                loadSessionEmotion(currentSession.value.sessionId)
+                // 只有当不是临时会话时才加载情绪分析
+                if (currentSession.value && currentSession.value.status !== 'TEMP') {
+                    loadSessionEmotion(currentSession.value.sessionId)
+                }
                 return
             }
             
@@ -407,6 +432,7 @@ const startAIResponse = (sessionId, userMessage) => {
                 const ok = String(payload.code) === '200'
                 if(ok && payload.data && payload.data.content) {
                     aiMessage.content += payload.data.content
+                    scrollToBottom()
                 } else if(!ok) {
                     handleError(payload.message || payload.msg || 'AI回复失败')
                     ctrl.abort()
@@ -414,6 +440,7 @@ const startAIResponse = (sessionId, userMessage) => {
             } catch (error) {
                 // 直接将原始数据作为内容添加
                 aiMessage.content += raw
+                scrollToBottom()
             }
         },
         onerror: (err) => {
@@ -421,13 +448,22 @@ const startAIResponse = (sessionId, userMessage) => {
             // 避免在正常的连接关闭时误报错误
             if (err && err.message && !err.message.includes('abort')) {
                 handleError('AI回复失败，请重试')
+            } else {
+                // 即使没有显示错误信息，也需要将 isTyping 设为 false
+                const aiMessage = messages.value[messages.value.length - 1]
+                if (aiMessage) {
+                    aiMessage.isTyping = false
+                }
+                isAiTyping.value = false
             }
-            isAiTyping.value = false
             ctrl.abort()
         },
         onclose: () => {
             isAiTyping.value = false
-            loadSessionEmotion(currentSession.value.sessionId)
+            // 只有当不是临时会话时才加载情绪分析
+            if (currentSession.value && currentSession.value.status !== 'TEMP') {
+                loadSessionEmotion(currentSession.value.sessionId)
+            }
         }
     })
 }
@@ -436,6 +472,7 @@ const handleError = (message = 'AI回复失败，请重试') => {
     const aiMessage = messages.value[messages.value.length - 1]
     if(aiMessage) {
         aiMessage.content = message
+        aiMessage.isTyping = false
     }
     isAiTyping.value = false
     ElMessage.error(message)
@@ -471,6 +508,7 @@ const handleSessionClick = (session) => {
     // 加载会话消息
     getSessionDetail(session.id).then(res => {
         messages.value = res
+        scrollToBottom()
     })
     // 加载会话情绪分析结果
     loadSessionEmotion(session.id)
@@ -500,22 +538,34 @@ const formatTime = (timeString) => {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
+const scrollToBottom = () => {
+    // 延迟执行，确保DOM已更新
+    setTimeout(() => {
+        if (chatMessagesRef.value) {
+            chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight
+        }
+    }, 50)
+}
+
 onMounted(() => {
     getSessionPage().then(() => {
         // 只有当没有会话时才创建新的前端会话
         if (!currentSession.value || !currentSession.value.sessionId) {
             createNewFrontendSession()
         } else {
-            // 如果有会话，加载会话详情
-            getSessionDetail(currentSession.value.sessionId).then(res => {
-                messages.value = res
-            }).catch(error => {
-                console.error('加载会话详情失败:', error)
-                // 加载失败时创建新会话
-                createNewFrontendSession()
-            })
-            // 加载会话情绪分析结果
-            loadSessionEmotion(currentSession.value.sessionId)
+            // 只有当不是临时会话时才加载会话详情和情绪分析
+            if (currentSession.value.status !== 'TEMP') {
+                // 如果有会话，加载会话详情
+                getSessionDetail(currentSession.value.sessionId).then(res => {
+                    messages.value = res
+                }).catch(error => {
+                    console.error('加载会话详情失败:', error)
+                    // 加载失败时创建新会话
+                    createNewFrontendSession()
+                })
+                // 加载会话情绪分析结果
+                loadSessionEmotion(currentSession.value.sessionId)
+            }
         }
     })
 })
